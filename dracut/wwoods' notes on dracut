@@ -1,0 +1,292 @@
+wwoods' notes on dracut: theory, operation, and good practice
+
+Will Woods
+
+<wwoods@redhat.com>
+Revision History
+Revision 0.2	May 2012	WW
+document mainloop and a bit about networking
+Table of Contents
+
+Introduction
+Legal Notice
+Building initramfs
+modules
+module-setup.sh
+Booting the system
+startup
+cmdline parsing
+udev
+networking
+mainloop
+Troubleshooting
+Good Practice
+Introduction
+
+This document came out of a bunch of notes I took while trying to hack on dracut. Once you know how it’s put together, it’s actually really easy to get things done… but woo boy, that learning curve.
+
+So. Hopefully these notes will help anyone else who’s looking at dracut and trying to understand it, or add new stuff, or fix/improve/destroy existing code.
+
+Dracut is like 98% shell scripts, so you’re gonna need to know some sh/bash to do anything with it. Luckily bash is really easy. Almost too easy. But I’ll save that rant for another day.
+
+Legal Notice
+
+This work is licensed under the Creative Commons Attribution-ShareAlike 3.0 Unported License. To view a copy of this license, visit http://creativecommons.org/licenses/by-sa/3.0/ or send a letter to Creative Commons, 444 Castro Street, Suite 900, Mountain View, California, 94041, USA.
+
+Building initramfs
+
+modules
+
+Note
+
+Whenever I talk about modules in this document I’m talking about dracut modules. Kernel modules are a totally different thing, and to avoid confusion I may refer to them as drivers instead.
+
+dracut builds the initramfs out of modules, which are found in /usr/lib/dracut/modules.d. [1] Each module is prefixed with a number, like 40network or 99base. The number (which I’ll call the priority) determines what order the modules are run in while building the initramfs.
+
+module priority
+
+dracut refuses to overwrite files when installing things into the initramfs, so things installed by the the lower numbered modules have priority over the higher ones. This lets your module override things that are set up by the dracut builtin modules (which are numbered 90-99).
+
+Note
+
+the module’s priority has nothing to do with what order the scripts will run inside the initramfs. That’s all controlled by the priorities set by the inst_hook lines in module-setup.sh. Speaking of which..
+
+module-setup.sh
+
+module-setup.sh will usually contain three functions: check(), depends(), and install().
+
+check()
+
+This function checks to see if this module should be included in the initramfs that’s being built. It can return one of three values:
+
+0
+Include this module in the initramfs, whether or not the user requested it. This is the default behavior if check() is missing.
+1
+Do not include this module, even if requested by name. Return this if some required binaries are missing or the module conflicts with another module/setting.
+255
+Include this module if it was requested. This is good for "optional" modules - they won’t be included by default but the user can add them in.
+Note
+
+If there isn’t an explicit return statement, the return value of a shell function is the return value of the last command executed.
+
+So it’s not uncommon to see a check() function like this:
+
+check() {
+    [ -x /usr/bin/cpio ]
+}
+This will return 0 if /usr/bin/cpio exists and 1 otherwise. Easy!
+
+depends()
+
+This function prints a list of other modules required by this module. The return value is ignored.
+
+install()
+
+This is where the files from the module directory (called $moddir inside the script) get installed into the initramfs, along with other stuff the module requires (executables, udev rules, etc.).
+
+Dracut provides a bunch of functions that are specialized for installing various types of files:
+
+inst FILE [TARGET]
+Try to install the named file at the target path (or the same path, if no target was given). Handles dependencies (libraries, script interpreters, symlink targets, etc.) automatically.
+dracut_install [-o] FILE [FILE …]
+Same as inst, but you can install a whole bunch of files at once. Useful for installing required binaries. This will abort initramfs creation if any of the files are missing, unless you use the -o flag (for "optional" binaries.)
+inst_hook HOOKNAME PRIORITY SCRIPT
+Install a script (which must end in .sh!) into the named hook. PRIORITY is a two-digit number that controls the order in which the scripts run. We’ll talk more about hooks in a later section.
+inst_dir DIRECTORY
+Create the named directory in the initramfs.
+There are other functions, but these are the really useful ones. See dracut-functions.sh for details.
+
+installkernel()
+
+If a module requires certain kernel modules, it might define installkernel(). To install kernel modules you do the following:
+
+instmods DRIVER [DRIVER …]
+Install the named kernel modules, along with all their dependencies. You can also install entire directories/subsystems by specifying e.g. =block or =drivers/usb/storage.
+Booting the system
+
+When the system boots, the kernel unpacks the initramfs and runs /init, which is installed from 99base/init.sh. It runs through a bunch of different phases of operation to bring up the system. In each phase there are hooks, which are places where modules can insert scripts to be run.
+
+Important
+
+Everything that runs in a hook is sourced by init. The variables and functions created in each script will be visible in later scripts. This lets you set a variable in one script and then refer to it later without needing to save it to a file, but be careful not to overwrite the variable names used by other scripts.
+
+Here’s a condensed version of how init runs, for reference. I’ll explain each step in more detail in the following sections.
+
+startup
+Source dracut-lib.sh. Mount special filesystems (/proc, /sys, etc.) and create dirs. Start logging if requested. Source /etc/conf.d/*.conf.
+parse cmdline
+Run cmdline hook. DIE if $root is empty or $rootok is not 1. Export root info.
+run udev
+Run pre-udev hook. Start udevd. Run pre-trigger hook. Run udevadm trigger. Kernel modules load, udev rules start running.
+mainloop
+Wait for required devices to come online. Until all the scripts in the initqueue/finished hook succeed, run initqueue hooks and subhooks every 0.5 seconds. DIE after 30 attempts.
+mount root filesystem
+Run pre-mount hook. Run mount hook until $NEWROOT is usable. DIE after 20 attempts. Run pre-pivot hook. Check for real init. Drop into emergency shell if missing.
+cleanup and switch_root
+Stop udevd. Clean up environment and udev db. Bind-mount /run to $NEWROOT/run, if the latter exists. Stop logging. Run cleanup hook. Drop into shell if rd.break is set. switch_root into $NEWROOT and start real init.
+startup
+
+Source /lib/dracut-lib.sh
+
+This is basically the first thing that happens, and it pulls in all the useful functions from dracut-lib.sh. You should be using those functions rather than writing your own strstr() or splitsep() methods!
+
+Mount special filesystems
+
+The full list of filesystems that get mounted: /proc, /sys, /dev, /dev/pts, /dev/shm, and /run.
+
+It also creates $UDEVRULESD and /run/initramfs.
+
+Start logging if requested
+
+If rd.debug is set, dracut will be run with bash -x and all output will be logged to /run/initramfs/init.log.
+
+Source /etc/conf.d/*.conf
+
+Source any .conf files in /etc/conf.d. This lets you change things like $NEWROOT (which is where the root device will be mounted when found).
+
+cmdline parsing
+
+Run cmdline hook
+
+All the scripts in the cmdline hook are run at this point. They run in order of the priority set when they were installed by inst_hook.
+
+As noted above, the scripts are all sourced by dracut, so they all share the same environment.
+
+Note
+
+Even though /sys is mounted at this point, there’s nothing useful in /sys/class/block or /sys/class/net until udev gets started.
+
+If you need to get some info out of /sys you’ll probably need to schedule a job to run in the mainloop. (See the section called “mainloop”)
+
+DIE if $root is empty or $rootok is not 1
+
+Important
+
+If your module is responsible for finding a root device [2], you must ensure that root is non-empty and rootok=1 before the cmdline hook ends, or dracut will simply halt.
+
+Export root info
+
+At this point, dracut exports the following variables:
+
+root rflags fstype netroot NEWROOT
+In version 017 and earlier it wrote these variables to /tmp/root.info but that file is no longer written and should be considered deprecated. [3]
+
+udev
+
+Run pre-udev hook (genrules scripts)
+
+This is where all the scripts that generate udev rules (usually named *-genrules.sh - for example, 40network/net-genrules.sh.
+
+Usually, generating the udev rules will look something like this:
+
+  printf 'SUBSYSTEM=="block", SYMLINK=="%s", RUN+="/sbin/initqueue --settled --onetime --unique /sbin/some-command $env{DEVNAME}"\n' by-label/$DISKLABEL
+In short, this says that when a block device with the label $DISKLABEL appears (and udev is settled), we should run "/sbin/some-command $DEVNAME" - and run it only once.
+
+Note
+
+nearly all the udev rules in dracut use /sbin/initqueue to quickly schedule the command to be run in the dracut mainloop and then return. (See the section called “mainloop”). You should not run commands directly from udev, especially if they take a non-trivial amount of time.
+
+TODO: more about udev rules TODO: more about using initqueue
+
+Start udevd
+
+Starts udevd. Rules get loaded and new events will be processed.
+
+Run pre-trigger hook
+
+This hook runs after udev is started, but before any of the rules run. This is a good place to set udev properties / environment variables using udevproperty.
+
+Run udevadm trigger
+
+What actually gets run is:
+
+udevadm control --reload
+udevadm trigger --type=subsystems --action=add
+udevadm trigger --type=devices --action=add
+which will cause the system to load drivers for basically every device it can find and fire off any applicable udev rules. This is where all the drivers get loaded.
+
+networking
+
+Once the network devices appear, dracut can try bring up the network.
+
+Note
+
+dracut will not bring up the network unless it needs to! In general, it only brings up the network if your root= argument is on a network device. You can force it to bring up the network by adding rd.neednet=1 to the boot arguments.
+
+network configuration
+
+Dracut supports a whole bunch of network configuration arguments - see dracut.kernel(7) for details. A couple of common ones:
+
+Try DHCP on every interface (this is the default):
+
+ip=dhcp
+Try DHCP on a specific interface:
+
+ip=eth0:dhcp
+Static configuration of a specific interface:
+
+ip=192.168.122.100::192.168.122.1:255.255.255.0::eth0:none nameserver=192.168.122.1
+Note
+
+as mentioned above, dracut will ignore these arguments unless it needs to bring up the network to find the root device (or you set rd.neednet=1).
+
+mainloop
+
+This is the heart of dracut. Basically, dracut will sit in a loop, waiting for events and running scripts until all the scripts in the initqueue/finished hook return success or a timeout value is reached.
+
+Run initqueue/finished hook
+
+The first thing dracut does is run the scripts in the initqueue/finished hook and check their return values. If all the initqueue/finished scripts return successfully, dracut exits the mainloop immediately.
+
+Note
+
+If this happens on the first pass through the mainloop, none of the other initqueue scripts will run. Make sure you install an initqueue/finished script to make dracut wait for anything that must run!
+
+Run initqueue hook
+
+If one or more of the initqueue/finished scripts returns non-zero, we’ll continue processing. Dracut will then run the scripts in the initqueue hook.
+
+The scripts in the initqueue hooks are generally put there by udev rules running /sbin/initqueue - see the section called “Run pre-udev hook (genrules scripts)” above.
+
+After running the hook, dracut checks initqueue/finished again, and exits the loop if they all succeed.
+
+Run initqueue/settled hook
+
+Now dracut checks to see if udev is settled - that is, if there are any new udev events that need processing. If there are, we bounce back to the start of the mainloop. If not, then we’re settled, and the initqueue/settled hook gets run.
+
+As before, after the hook it checks initqueue/finished and exits if we’re all done.
+
+Sleep a bit and check for timeout
+
+Having finished one pass through the loop, it’s time to wait for more events. The mainloop sleeps for half a second, and then we check and increment our loop counter.
+
+If we’ve gotten to the rd.retry value (default: 20 loops, 10 seconds) then the initqueue/timeout hook is run.
+
+If we’ve gotten to twice the rd.retry value (default: 40 loops, 20 seconds) then the emergency_shell function runs with the message "Unable to process initqueue". Alas!
+
+The initqueue/online hook
+
+The scripts in this hook are run whenever a network device is successfully configured.
+
+In dracut 018 the scripts will have $netif set to the name of the interface that just came up; current dracut passes the interface name as $1.
+
+Troubleshooting
+
+Here’s some tips on troubleshooting problems with dracut.
+
+TODO
+
+Good Practice
+
+Now that we’ve got some idea how dracut works, let’s talk a bit about writing good shell code. [4]
+
+TODO
+
+
+[1] /usr/share/dracut/modules.d in dracut 013 and earlier.
+
+[2] (and what else would you be doing in initramfs?)
+
+[3] Removed in commit 2c03172, 8 Mar 2012
+
+[4] "Good" is a relative term here. Shell scripts are never pretty. The best we can really hope for is "maintainable" and "not horrifying".
