@@ -1,0 +1,2 @@
+To create a initramfs image, the most simple command is:
+# dracut
