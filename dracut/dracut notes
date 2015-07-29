@@ -1,2 +1,45 @@
 To create a initramfs image, the most simple command is:
 # dracut
+# dracut --force
+
+Inspecting the Contents
+To see the contents of the image created by dracut, you can use the lsinitrd tool.
+# lsinitrd | less
+To display the contents of a file in the initramfs also use the lsinitrd tool:
+# lsinitrd -f /etc/ld.so.conf
+include ld.so.conf.d/*.conf
+
+To see a list of available dracut modules, use the --list-modules option:
+# dracut --list-modules
+
+Some dracut modules are turned off by default and have to be activated manually. 
+You can do this by adding the dracut modules to the configuration file /etc/dracut.conf or /etc/dracut.conf.d/myconf.conf
+
+To get a quick start for the suitable kernel command line on your system, use the --print-cmdline option:
+# dracut --print-cmdline
+
+Injecting custom Files
+To add your own files to the initramfs image, you have several possibilities.
+The --include option let you specify a source path and a target path. For example
+# dracut --include cmdline-preset /etc/cmdline.d/mycmdline.conf initramfs-cmdline-pre.img
+will create an initramfs image, where the file cmdline-preset will be copied inside the initramfs to /etc/cmdline.d/mycmdline.conf. --include can only be specified once.
+
+The --install option let you specify several files, which will get installed in the initramfs image at the same location, as they are present on initramfs creation time.
+# dracut --install 'strace fsck.ext3 ssh' initramfs-dbg.img
+
+Identifying your problem area
+Remove 'rhgb' and 'quiet' from the kernel command line
+Add 'rd.shell' to the kernel command line. This will present a shell should dracut be unable to locate your root device
+Add 'rd.shell rd.debug log_buf_len=1M' to the kernel command line so that dracut shell commands are printed as they are executed
+The file /run/initramfs/rdsosreport.txt is generated, which contains all the logs and the output of all significant tools, which are mentioned later.
+If you want to save that output, simply mount /boot by hand or insert an USB stick and mount that. Then you can store the output for later inspection.
+
+Debugging dracut on shutdown
+To debug the shutdown sequence on systemd systems, you can rd.break on pre-shutdown or shutdown.
+To do this from an already booted system:
+# mkdir -p /run/initramfs/etc/cmdline.d
+# echo "rd.debug rd.break=pre-shutdown rd.break=shutdown" > /run/initramfs/etc/cmdline.d/debug.conf
+# touch /run/initramfs/.need_shutdown
+This will give you a dracut shell after the system pivot’ed back in the initramfs.
+
+
