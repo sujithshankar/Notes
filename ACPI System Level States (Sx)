@@ -1,0 +1,44 @@
+ACPI system level references are seven power states that a device can be in. We commonly refer to them as S0 through S6.
+
+If the system is in a lower power state than a device can support, the device is turned off. All states may be triggered by OS or BIOS, but states below S1 may only be resumed by BIOS. The OS is informed of a hardware power management trigger by the system control interrupt (SCI). Simple SCIs (such as "Power button") are handled directly. Complex SCIs (such as S4) are handled by AML.
+
+S0
+The system is turned on. The CPU is executing or ready to execute instructions, PCI activity is full, AGP activity is full. RAM is being read from, written to or refreshed. Hard disks are on.
+
+S1 "Power On Suspend/Stopgrant" MS: Standby
+The system is turned on. The CPU is not executing and is not ready to execute instructions, although registers and caches are maintained. Devices signalling support for S1 are in the on state, devices without support for S1 are in the off state. RAM is idle, but refreshed. Any device currently in S1 with support for resuming may resume the system (WOL, WOR, keyboard, mouse, timer, etc.). PSU state is on. Hard disks are off in this state and all states deeper. 
+
+S2 "Standby"
+Confusing "common" names. S2 is quite logically an intermediate between S1 and S3. RAM refreshes normally. The CPU is in state much like S3. In fact, this is pretty much S3 but with a faster RAM refresh.
+S2 is in the spec, but not usually implemented.
+
+S3 "Suspend to RAM" MS: Standby (if notified by BIOS)
+S3 often needs enabling by jumper on the motherboard or by support in BIOS. The CPU is not executing instructions, is not ready to execute instructions, does not maintain its registers and does not maintain cache. The OS must flush dirty pages from the cache when S3 is entered. Devices able to support S3 and are enabled for resuming, may resume the system. PSU state is off, system RAM is refreshed (at reduced refresh) using 5Vsb. External peripherals (keyboard, mouse) may or may not be able to resume the system, depending on what their host controller does.
+
+S4 "Suspend to disk" MS: Hibernate
+All hardware is in the off state and maintains no context. The system may only be resumed by timer or other hardware resume devices (such as WOL or WOR), but not by interrupts. The contents of RAM are saved to disk and replaced on resume. The PSU is in the off state. Power may be mechanically removed without ill effect.
+Note: S4BIOS is a variation of S4 wherein the BIOS reloads the image and not the OS boot loader. As NTLDR is S4 compatible, this is generally used with other OS'. Linux S4BIOS support is "experimental". Note also that using Windows2000 or XP with grub or lilo WILL break S4 support.
+
+S5 "Soft-Off" MS: Hibernate
+All hardware is in the off state and maintains no context. CMOS is maintained by 5Vsb, as in S4. The PSU is in off state. Power may be mechanically removed without ill effect.
+
+S6
+As S5, but the PSU is isolated. CMOS is maintained by battery. This is not an "official" ACPI state, but is included in many motherboard manuals for some strange reason. This is the best I can dig up about it.
+
+OS Support
+Windows95 does not support any ACPI power management state. Through APM it can access something very like S1, however.
+Windows98 can use S1 or S3, but S3 support is not good.
+WindowsME can use S1, S3 and S4 but not on all hardware. It shares 98's dislike of S3.
+Windows2000 has full ACPI support.
+WindowsXP has full ACPI support.
+Linux (2.4) can use S1 and S3, but not S4. (check your compile with "cat /proc/acpi/info" and give SWSUSP a try)
+FreeBSD appears to handle S1, S3 and S4BIOS.
+
+BIOS Support
+ACPI brings a whole new way of dealing with hardware. It very effectively resolves hardware conflicts and, indeed, there are systems that won't work without it. Such as the one I'm typing on now.
+Of course, ACPI is damn complicated. So vendors tend to skimp. To be "Microsoft ACPI Compliant", a BIOS merely has to support the subset of ACPI which Windows uses. It may not support S2 at all, for example. So earlier machines would not support ACPI well under Linux (though Linux now holds a known "bad-BIOS" list) or BSD.
+
+General ACPI support and feature
+ACPI is a necessity for SMT (hyper-threading) and increasingly NUMA (such as dual Opteron) systems need ACPI to initialise correctly. ACPI is also mandatory for both IA64 and AA64.
+SMP systems benefit from ACPI as some systems now do not the configuration tables used before ACPI for initialising SMP. I believe this is MPS1.1 and MPS1.4.
+ACPI should be used instead of APM, since APM is a brute force "behind the operating system's back" sort of kludge. It also should be used instead of PNPBIOS since PNPBIOS wasn't very reliable at times. ACPI is designed to move all power management responsibility to the OS since the OS will know best what's going on and what the user wants.
