@@ -1,0 +1,1 @@
+Echo -n 'module usb-storage +p' > /sys/kernel/debug/dyanamic_control/control
