@@ -1,0 +1,116 @@
+Linux*-ACPI - Debug: How to Isolate Linux ACPI Issues:
+Start by identifying if the issue at hand:
+
+has always occurred on every version of Linux tested.
+is a regression as compared to some earlier version of Linux.
+If the issue is a regression, please find the version where the issue first appeared. This can be done by downloading older kernels from kernel.org, such as ftp://ftp.kernel.org/pub/linux/kernel/v2.6/linux-2.6.22.6.tar.gz
+
+Or, the coolest way to isolate where a regression started, is to use git-bisect, as detailed in the following handbook and git tutorial.
+
+Linux Kernel testing handbook:
+http://www.stardust.webpages.pl/files/handbook/handbook-en.pdf
+Git tutorial:
+http://www.kernel.org/pub/software/scm/git/docs/tutorial.html
+git-bisect man page:
+http://www.kernel.org/pub/software/scm/git/docs/git-bisect.html
+Decoding ACPI Console Messages
+------------------------------TBD
+
+My System Doesn't Boot
+First, boot with "acpi=off" (or build with CONFIG_ACPI=n), or disable ACPI in BIOS SETUP.
+
+If the same failure occurs with ACPI disabled, then that should be noted and the issue reported to the appropriate mailing list or linux-kernel@vger.kernel.org.
+If "acpi=off" makes the failure goes away, then it is likely an ACPI bug. But if a different failure occurs with ACPI disabled, then the test was inconclusive.
+If the system boots with "acpi=off", but fails otherwise, there are a number of boot parameters that disable different parts of ACPI that can be used to isolate where the issue lies.
+acpi=ht
+the most like "acpi=off", disables all of ACPI except what is needed to enumerate processors.
+If acpi=off works and acpi=ht fails, then the issue is in the ACPI table parsing code itself, or perhaps the SMP code.
+pci=noacpi
+Disables ACPI for PCI root bus enumeration.
+Disables ACPI for IRQ routing.
+acpi=noirq
+Disables ACPI for IRQ routing.
+pnpacpi=off
+Disables the ACPI component of the Linux Plug and Play code.
+noapic
+Disables the IO-APIC for IRQ routing.
+nolapic
+Disables the Local-APIC and the IO-APIC.
+Device Interrupt Issues
+The most common interrupt issue is "irqXX: nobody cared!" and a stack trace. This means that the kernel received an interrupt, but there was no driver registered on that IRQ to handle it. As nobody handled it, the kernel had to disable that IRQ to get it to stop bothering the system. Any other devices sharing that IRQ are now dead, as they can not receive any interrupts.
+"irqpoll" will make the kernel poll for interrupts, and will work-around dead devices due to the failure above. However, it doesn't help debug the root cause.
+pci=noacpi, acpi=noirq, pnpacpi=off, noapic, nolapic are all knobs that can be turned to help isolate the problem.
+Thermal Issues
+If the fan is spinning too much, or the system still gets hot when the fan is spinning fast:
+
+If the system is a laptop, most times this means that there is dust blocking the air flow from the fan over the heat-sink.
+Clean out the air vents.
+Some people find that blowing compressed air through the air vents helps.
+If you build your own system:
+Verify that you used thermal grease on the heat-sink.
+Verify that it is securely attached.
+Does the same issue happen with and without "acpi=off"?
+
+If yes, then Linux ACPI is not related to the failure.
+
+Does ACPI control the fan on this system?
+
+Virtually no desktops or servers use ACPI fan control. Instead, they use an embedded controller or other hardware on the motherboard that is independent of ACPI.
+
+Note that sometimes you can view and control this hardware with BIOS SETUP. Some systems, for example, run all fans at maximum speed by default and require you to enable fan speed control in SETUP.
+
+From Linux, you may be able to view and sometimes control native fan speed control with CONFIG_HWMON=y and the appropriate drivers sensors sub-system. Note, however, that some machines have conflicts between CONFIG_HWMON and CONFIG_ACPI because they may access the same underlying hardware using two different methods.
+
+Most notebooks also use native fan control instead of ACPI. There are, however, a couple of notable exceptions: HP/Compaq, Acer, and Fujitsu-Siemens often use ACPI-based fan-control.
+
+If /proc/acpi/fan is empty and /proc/acpi/thermal_zone/*/trip_points has no active trip points (those starting with "AC") then there is no ACPI-based fan control on your system.
+
+If you have dis-assembled the DSDT, you can also check if the device "PNP0C0B" is present. That is the standard identifier for a fan device.
+
+Suspend to RAM Issues
+---------------------TBD
+
+Suspend to Disk Issues
+----------------------TBD
+
+Using ACPI_DEBUG Boot Parameters:
+acpi.debug_level and acpi.debug_layer
+ACPI can produce tons of debug output if these debug masks are switched to full on.
+
+include/acpi/acoutput.h shows which flags can be enabled for level and layer, and cat /sys/module/acpi/parameters/debug_{level,layer} also shows you the flags.
+
+Therefore, switch on debug flags carefully. You also might want to increase the kernel ring buffer by passing: log_buf_len=XY in bytes and later use dmesg -s XY to get more than 16k kernel log output.
+
+Instead of serial console logging you might want to use the netconsole interface (Documentation/networking/netconsole.txt) to send syslog messages over network or firewire to send syslog messages over firewire. The latter might be the only way to debug early hangs on laptops without a serial device anyway.
+
+Using ACPI_DEBUG Boot Parameters Using /sysfs and /proc
+You can also pass the parameters at runtime, for example, using:
+
+# echo 0x1F >/sys/module/acpi/parameters/debug_{level,layer}
+Note that this interface exists since 2.6.22. In older kernels, it is /proc/acpi/debug_{level,layer}, which worked in the same way.
+
+Wrapping such statements around loading and unloading a bug affected ACPI module might give you the possibility to increase debug_level, but still only give you a manageable amount of debug output.
+
+Using ACPI_DEBUG acpi_dbg_layer and acpi_dbg_level kernel variables.
+
+Similar, but more powerful than 3.2.3, is to modify the global kernel variables for level and layer conditionally in the kernel code for your needs.
+
+For example:
+
+/* increase debug output to max */
+acpi_debug_level=0xFFFFFFFF;
+
+/*
+* invoke an ACPI method that your desire be invoked
+* with full debugging enabled
+*/
+status = acpi_ut_evaluate_object(...);
+
+/* restore debug level again */
+acpi_debug_level=0x3;
+
+Overriding a DSDT
+----------------- TBD
+
+Project: 
+Linux*-ACPI
